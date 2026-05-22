@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Radio Live</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --border: #222;
+      --accent: #e8c872;
+      --accent2: #c45c3a;
+      --text: #f0ece0;
+      --muted: #666;
+      --radius: 2px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Mono', monospace;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Grain overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 100;
+      opacity: 0.6;
+    }
+
+    .card {
+      width: 420px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 48px 40px 40px;
+      position: relative;
+      animation: fadeIn 0.8s ease both;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(16px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* corner accents */
+    .card::before, .card::after {
+      content: '';
+      position: absolute;
+      width: 18px; height: 18px;
+      border-color: var(--accent);
+      border-style: solid;
+    }
+    .card::before { top: -1px; left: -1px; border-width: 2px 0 0 2px; }
+    .card::after  { bottom: -1px; right: -1px; border-width: 0 2px 2px 0; }
+
+    .badge {
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--accent);
+      border: 1px solid var(--accent);
+      display: inline-block;
+      padding: 3px 10px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      font-family: 'DM Serif Display', serif;
+      font-size: 38px;
+      line-height: 1.1;
+      margin-bottom: 6px;
+      letter-spacing: -0.5px;
+    }
+
+    h1 em {
+      font-style: italic;
+      color: var(--accent);
+    }
+
+    .subtitle {
+      font-size: 11px;
+      color: var(--muted);
+      letter-spacing: 0.12em;
+      margin-bottom: 36px;
+    }
+
+    /* Visualizer bars */
+    .visualizer {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 36px;
+      margin-bottom: 32px;
+    }
+
+    .bar {
+      flex: 1;
+      background: var(--accent);
+      opacity: 0.15;
+      border-radius: 1px;
+      height: 4px;
+      transition: height 0.15s ease;
+    }
+
+    .playing .bar {
+      opacity: 0.7;
+      animation: bounce var(--dur, 0.8s) ease-in-out infinite alternate;
+    }
+
+    @keyframes bounce {
+      from { height: var(--min, 4px); }
+      to   { height: var(--max, 30px); }
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 28px;
+    }
+
+    .btn-play {
+      width: 56px; height: 56px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+      transition: transform 0.15s, background 0.2s;
+      position: relative;
+    }
+
+    .btn-play:hover { transform: scale(1.08); background: #f0d485; }
+    .btn-play:active { transform: scale(0.95); }
+
+    .btn-play svg { fill: #0a0a0a; width: 20px; height: 20px; }
+
+    .meta {
+      display: flex; flex-direction: column; gap: 4px;
+    }
+
+    .status {
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .status.live {
+      color: var(--accent2);
+    }
+
+    .status.live::before {
+      content: '● ';
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.2; }
+    }
+
+    .track-name {
+      font-family: 'DM Serif Display', serif;
+      font-size: 18px;
+      letter-spacing: 0.02em;
+    }
+
+    /* Volume */
+    .volume-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .vol-icon {
+      color: var(--muted);
+      font-size: 13px;
+      width: 16px;
+      text-align: center;
+    }
+
+    input[type=range] {
+      -webkit-appearance: none;
+      flex: 1;
+      height: 2px;
+      background: var(--border);
+      outline: none;
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    input[type=range]::-webkit-slider-runnable-track {
+      height: 2px;
+    }
+
+    .vol-val {
+      font-size: 10px;
+      color: var(--muted);
+      width: 28px;
+      text-align: right;
+    }
+
+    /* Error */
+    .error-msg {
+      display: none;
+      margin-top: 16px;
+      font-size: 11px;
+      color: var(--accent2);
+      letter-spacing: 0.08em;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 28px 0;
+    }
+
+    .url-label {
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .url-text {
+      font-size: 10px;
+      color: #444;
+      word-break: break-all;
+      line-height: 1.6;
+    }
+
+    audio { display: none; }
+  </style>
+</head>
+<body>
+
+<div class="card" id="card">
+  <div class="badge">Diffusion en direct</div>
+  <h1>Radio <em>Live</em></h1>
+  <p class="subtitle">HLS · 217.160.243.209</p>
+
+  <div class="visualizer" id="viz">
+    <!-- bars generated by JS -->
+  </div>
+
+  <div class="controls">
+    <button class="btn-play" id="playBtn" aria-label="Lecture / Pause">
+      <svg id="iconPlay" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      <svg id="iconPause" viewBox="0 0 24 24" style="display:none"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+    </button>
+    <div class="meta">
+      <span class="status" id="statusLabel">En attente</span>
+      <span class="track-name" id="trackName">-</span>
+      <span class="track-artist" id="trackArtist"></span>
+    </div>
+  </div>
+
+  <div class="volume-row">
+    <span class="vol-icon">♪</span>
+    <input type="range" id="volume" min="0" max="1" step="0.01" value="0.8"/>
+    <span class="vol-val" id="volVal">80%</span>
+  </div>
+
+  <div class="error-msg" id="errorMsg">⚠ Impossible de charger le flux.</div>
+
+  <hr class="divider"/>
+  <div class="url-label">Source</div>
+  <div class="url-text">http://217.160.243.209/live/stream.m3u8</div>
+</div>
+
+<audio id="audioEl"></audio>
+
+<script>
+  const STREAM_URL = 'http://217.160.243.209/live/stream.m3u8';
+  const audio      = document.getElementById('audioEl');
+  const playBtn    = document.getElementById('playBtn');
+  const iconPlay   = document.getElementById('iconPlay');
+  const iconPause  = document.getElementById('iconPause');
+  const statusLabel= document.getElementById('statusLabel');
+  const volumeSlider = document.getElementById('volume');
+  const volVal     = document.getElementById('volVal');
+  const errorMsg   = document.getElementById('errorMsg');
+  const viz        = document.getElementById('viz');
+  const card       = document.getElementById('card');
+  const elTrackName  = document.getElementById('trackName');
+  const elArtist     = document.getElementById('trackArtist');
+
+  // --- Visualizer setup ---
+  const BAR_COUNT = 28;
+  const bars = [];
+  for (let i = 0; i < BAR_COUNT; i++) {
+    const b = document.createElement('div');
+    b.className = 'bar';
+    const minH = 4 + Math.random() * 6;
+    const maxH = 14 + Math.random() * 20;
+    const dur  = (0.5 + Math.random() * 0.8).toFixed(2);
+    const delay = (Math.random() * 0.5).toFixed(2);
+    b.style.setProperty('--min', minH + 'px');
+    b.style.setProperty('--max', maxH + 'px');
+    b.style.setProperty('--dur', dur + 's');
+    b.style.animationDelay = delay + 's';
+    viz.appendChild(b);
+    bars.push(b);
+  }
+
+  // --- HLS setup ---
+  let hls = null;
+  let loaded = false;
+
+  // Parser ID3 minimal (hls.js n'en fournit pas)
+  function parseID3(buffer) {
+      const u8 = (buffer instanceof Uint8Array) ? buffer : new Uint8Array(buffer);
+      const frames = [];
+  
+      // Trouver le header ID3
+      let start = -1;
+      for (let i = 0; i < Math.min(u8.length - 10, 512); i++) {
+          if (u8[i] === 0x49 && u8[i+1] === 0x44 && u8[i+2] === 0x33) {
+              start = i; break;
+          }
+      }
+      if (start === -1) return frames;
+  
+      const version = u8[start + 3];  // 3 = ID3v2.3
+
+      // Taille syncsafe
+      const tagSize =
+        ((u8[start+6] & 0x7F) << 21) | ((u8[start+7] & 0x7F) << 14) |
+        ((u8[start+8] & 0x7F) <<  7) |  (u8[start+9] & 0x7F);
+
+      let offset = start + 10;
+      const end  = start + 10 + tagSize;
+
+      while (offset + 10 < end) {
+          const key = String.fromCharCode(u8[offset],u8[offset+1],u8[offset+2],u8[offset+3]);
+          if (!/^[A-Z0-9]{4}$/.test(key)) break;
+
+          // Taille frame : big-endian en v2.3, syncsafe en v2.4
+          const frameSize = version >= 4
+            ? (((u8[offset+4]&0x7F)<<21)|((u8[offset+5]&0x7F)<<14)|((u8[offset+6]&0x7F)<<7)|(u8[offset+7]&0x7F))
+            : ((u8[offset+4]<<24)|(u8[offset+5]<<16)|(u8[offset+6]<<8)|u8[offset+7]);
+
+          if (frameSize <= 0 || frameSize > 500) break;
+
+          const encoding = u8[offset + 10];  // 0=latin1, 1=utf16, 3=utf8
+          const payload  = u8.slice(offset + 11, offset + 10 + frameSize);
+
+          try {
+              const charset = encoding === 0 ? 'iso-8859-1' : (encoding === 3 ? 'utf-8' : 'utf-16');
+              // Supprimer le BOM utf-16 et les null bytes
+              let value = new TextDecoder(charset).decode(payload).replace(/^\uFEFF/, '').replace(/\0/g, '').trim();
+              if (value) frames.push({ key, value });
+          } catch(e) { /* skip */ }
+
+          offset += 10 + frameSize;
+      }
+      return frames;
+  }
+// ─── Mise à jour affichage titre/artiste ──────────────────────────────────
+  let currentTitle = '';
+
+  function updateTrackInfo(title, artist) {
+    if (title === currentTitle) return;
+    currentTitle = title;
+    // Fade out
+    elTrackName.classList.add('fade-out');
+    elArtist.classList.add('fade-out');
+
+    setTimeout(() => {
+      elTrackName.textContent = title  || '—';
+      elArtist.textContent    = artist || '';
+      // Fade in
+      elTrackName.classList.remove('fade-out');
+      elArtist.classList.remove('fade-out');
+    }, 260);
+  }
+
+  function initHLS() {
+    if (Hls.isSupported()) {
+      hls = new Hls({ lowLatencyMode: true });
+      hls.loadSource(STREAM_URL);
+      hls.attachMedia(audio);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { loaded = true; });
+
+      hls.on(Hls.Events.FRAG_PARSING_METADATA, (event, data) => {
+          data.samples.forEach(sample => {
+            const frames = parseID3(sample.data);
+            let title = null, artist = null;
+            frames.forEach(f => {
+                if (f.key === 'TIT2') title  = f.value;
+                if (f.key === 'TPE1') artist = f.value;
+            });
+            if (title) updateTrackInfo(title, artist);
+        });
+      });
+
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) showError();
+      });
+    } else if (audio.canPlayType('application/vnd.apple.mpegurl')) {
+      audio.src = STREAM_URL;
+      loaded = true;
+    } else {
+      showError();
+    }
+  }
+
+  function showError() {
+    errorMsg.style.display = 'block';
+    setStatus('Erreur', false);
+  }
+
+  function setStatus(text, live) {
+    statusLabel.textContent = text;
+    statusLabel.className = 'status' + (live ? ' live' : '');
+  }
+
+  function setPlaying(playing) {
+    iconPlay.style.display  = playing ? 'none' : '';
+    iconPause.style.display = playing ? ''     : 'none';
+    if (playing) {
+      card.classList.add('playing');
+      setStatus('En direct', true);
+    } else {
+      card.classList.remove('playing');
+      setStatus('En pause', false);
+    }
+  }
+
+  playBtn.addEventListener('click', () => {
+    errorMsg.style.display = 'none';
+    if (!loaded) initHLS();
+
+    if (audio.paused) {
+      audio.volume = parseFloat(volumeSlider.value);
+      audio.play().catch(showError);
+    } else {
+      audio.pause();
+    }
+  });
+
+  audio.addEventListener('playing', () => setPlaying(true));
+  audio.addEventListener('pause',   () => setPlaying(false));
+  audio.addEventListener('waiting', () => setStatus('Chargement…', false));
+  audio.addEventListener('error',   showError);
+
+  volumeSlider.addEventListener('input', () => {
+    audio.volume = parseFloat(volumeSlider.value);
+    volVal.textContent = Math.round(volumeSlider.value * 100) + '%';
+  });
+</script>
+</body>
+</html>

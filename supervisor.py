@@ -198,7 +198,7 @@ CFG = {
     "grace_s":      8,
     "flag_poll_s":  2,
     "stat_poll_s":  10,
-    "nginx_stat":   "http://127.0.0.1:8080/stat",
+    "nginx_stat":   "http://127.0.0.1/stat",
 
     # Formats audio acceptés
     "audio_exts": {".m4a"},
@@ -550,9 +550,13 @@ class AudioPipe:
                     chunk = proc.stdout.read(CHUNK)
                     if not chunk:
                         break
+                    proc_hls = self._proc_hls
+                    if proc_hls is None or proc_hls.stdin is None:
+                        self._stop.set()
+                        break
                     try:
-                        self._proc_hls.stdin.write(chunk)
-                    except BrokenPipeError:
+                        proc_hls.stdin.write(chunk)
+                    except (BrokenPipeError, AttributeError):
                         log.warning("[PIPE] HLS stdin fermé")
                         self._stop.set()
                         break
@@ -669,7 +673,8 @@ async def go_live():
             return
         if S._grace_task and not S._grace_task.done():
             S._grace_task.cancel()
-        log.info("[SWITCH] → LIVE")
+        log.info("[SWITCH] → LIVE (2s wait)")
+        await asyncio.sleep(2)   # laisse le temps à nginx-rtmp d'indexer le flux
         start_live()
 
 
@@ -871,8 +876,11 @@ async def ffmpeg_watchdog():
                 err = ""
             log.warning("[WATCHDOG] FFmpeg quitté (code %d) : %s", ret, err)
             if S.live:
-                log.info("[WATCHDOG] Redémarrage LIVE")
-                start_live()
+                log.info("[WATCHDOG] Redémarrage LIVE (2s)")
+                await asyncio.sleep(2)   # ← délai avant retry
+                if S.live:               # vérifier que OBS est toujours là
+                    start_live()
+
             else:
                 log.info("[WATCHDOG] Redémarrage FALLBACK")
                 start_fallback()

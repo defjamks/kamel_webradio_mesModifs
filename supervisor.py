@@ -201,7 +201,7 @@ CFG = {
     "nginx_stat":   "http://127.0.0.1/stat",
 
     # Formats audio acceptés
-    "audio_exts": {".m4a"},
+    "audio_exts": {".m4a", ".flac", ".wav", ".aac"},
 }
 # =============================================================================
 

@@ -31,13 +31,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $date     = $_POST['date_prog'] ?? $date_sel;
                 $id_titre = (int)($_POST['id_titre'] ?? 0);
                 if (!$id_titre) throw new Exception("Titre non sélectionné.");
-                // ordre = max existant + 1
+
+                // 1. Récupérer les infos du titre qu'on veut ajouter
+                $req_titre = $pdo->prepare("SELECT id_artiste, nom_titre FROM titre WHERE id_titre = ?");
+                $req_titre->execute([$id_titre]);
+                $titre_concerne = $req_titre->fetch(PDO::FETCH_ASSOC);
+                $id_artiste_concerne = $titre_concerne['id_artiste'];
+
+                // 2. Vérification 1 : Est-ce le même artiste que le tout dernier morceau programmé ?
+                $req_dernier = $pdo->prepare("
+                    SELECT t.id_artiste, a.nom_artiste FROM programmation p
+                    JOIN titre t ON t.id_titre = p.id_titre
+                    JOIN artiste a ON a.id_artiste = t.id_artiste
+                    WHERE p.date_prog = ? ORDER BY p.ordre DESC LIMIT 1
+                ");
+                $req_dernier->execute([$date]);
+                $dernier_morceau = $req_dernier->fetch(PDO::FETCH_ASSOC);
+
+                if ($dernier_morceau && $dernier_morceau['id_artiste'] == $id_artiste_concerne) {
+                    throw new Exception("RÈGLE STRICTE : Impossible d'enchaîner deux morceaux de l'artiste « " . $dernier_morceau['nom_artiste'] . " ».");
+                }
+
+                // 3. Vérification 2 : Règles de fenêtres temporelles (2h Artiste / 6h Titre)
+                $check_rot = $pdo->prepare("
+                    SELECT 
+                        (SELECT nom_artiste FROM artiste WHERE id_artiste = :id_art AND derniere_diffusion >= NOW() - INTERVAL 2 HOUR) as artiste_bloque,
+                        (SELECT nom_titre FROM titre WHERE id_titre = :id_titre AND derniere_diffusion >= NOW() - INTERVAL 6 HOUR) as titre_bloque
+                ");
+                $check_rot->execute(['id_art' => $id_artiste_concerne, 'id_titre' => $id_titre]);
+                $bloquage = $check_rot->fetch(PDO::FETCH_ASSOC);
+
+                if ($bloquage['artiste_bloque']) {
+                    throw new Exception("ROTATION : Cet artiste a joué il y a moins de 2 heures.");
+                }
+                if ($bloquage['titre_bloque']) {
+                    throw new Exception("ROTATION : Le titre « " . $bloquage['titre_bloque'] . " » a joué il y a moins de 6 heures.");
+                }
+
+                // 4. Si tout est OK, on procède à l'insertion manuelle classique
                 $max = $pdo->prepare("SELECT COALESCE(MAX(ordre),0) FROM programmation WHERE date_prog=?");
                 $max->execute([$date]);
                 $ordre = (int)$max->fetchColumn() + 1;
+                
                 $pdo->prepare("INSERT INTO programmation (date_prog, ordre, id_titre) VALUES (?,?,?)")
                     ->execute([$date, $ordre, $id_titre]);
-                flash('ok', "Titre ajouté en position $ordre.");
+
+                // On met à jour ses compteurs immédiatement
+                $now = date('Y-m-d H:i:s');
+                $pdo->prepare("UPDATE artiste SET derniere_diffusion = ?, compteur_diffusion = compteur_diffusion + 1 WHERE id_artiste = ?")->execute([$now, $id_artiste_concerne]);
+                $pdo->prepare("UPDATE titre SET derniere_diffusion = ?, compteur_diffusion = compteur_diffusion + 1 WHERE id_titre = ?")->execute([$now, $id_titre]);
+
+                flash('ok', "Titre ajouté manuellement en position $ordre (Règles validées).");
                 break;
 
             case 'del_prog':
@@ -85,6 +129,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 flash('ok', "Programmation copiée de $src vers $dst.");
                 break;
 
+            // ── GÉNÉRATION AUTOMATIQUE ANTICLONAGE ─────────────────
+            case 'generate_auto':
+                $date = $_POST['date_prog'] ?? $date_sel;
+                $nb_morceaux_a_generer = 300;
+
+                for ($m = 0; $m < $nb_morceaux_a_generer; $m++) {
+                    // A. On cherche l'ID du dernier artiste inséré (qu'il soit issu d'un ajout manuel ou auto)
+                    $req_dernier = $pdo->prepare("
+                        SELECT t.id_artiste FROM programmation p
+                        JOIN titre t ON t.id_titre = p.id_titre
+                        WHERE p.date_prog = ? ORDER BY p.ordre DESC LIMIT 1
+                    ");
+                    $req_dernier->execute([$date]);
+                    $dernier_artiste_id = $req_dernier->fetchColumn() ?: 0;
+
+                    // B. Requête Entonnoir (Priorité aux règles : 2h Artiste / 6h Titre)
+                    $sql = "
+                        SELECT t.id_titre, t.id_artiste FROM titre t
+                        JOIN artiste a ON t.id_artiste = a.id_artiste
+                        WHERE a.id_artiste != :dernier_artiste_id
+                          AND (a.derniere_diffusion < NOW() - INTERVAL 2 HOUR OR a.derniere_diffusion IS NULL)
+                          AND (t.derniere_diffusion < NOW() - INTERVAL 6 HOUR OR t.derniere_diffusion IS NULL)
+                        ORDER BY RAND() LIMIT 1
+                    ";
+                    $stmt = $pdo->prepare($sql);
+                    $stmt->execute(['dernier_artiste_id' => $dernier_artiste_id]);
+                    $morceau = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                    // C. Mode Secours (Si la base est trop petite et que tout est verrouillé par le temps)
+                    if (!$morceau) {
+                        $sql_secours = "
+                            SELECT t.id_titre, t.id_artiste FROM titre t
+                            WHERE t.id_artiste != :dernier_artiste_id
+                            ORDER BY t.derniere_diffusion ASC LIMIT 1
+                        ";
+                        $stmt_secours = $pdo->prepare($sql_secours);
+                        $stmt_secours->execute(['dernier_artiste_id' => $dernier_artiste_id]);
+                        $morceau = $stmt_secours->fetch(PDO::FETCH_ASSOC);
+                    }
+
+                    // D. Insertion à la suite
+                    if ($morceau) {
+                        $max = $pdo->prepare("SELECT COALESCE(MAX(ordre),0) FROM programmation WHERE date_prog=?");
+                        $max->execute([$date]);
+                        $ordre = (int)$max->fetchColumn() + 1;
+
+                        $pdo->prepare("INSERT INTO programmation (date_prog, ordre, id_titre) VALUES (?,?,?)")
+                            ->execute([$date, $ordre, $morceau['id_titre']]);
+
+                        // On simule l'avancement pour le calcul du tour de boucle suivant
+                        $fake_now = date('Y-m-d H:i:s', strtotime("+$m minutes"));
+                        $pdo->prepare("UPDATE artiste SET derniere_diffusion = ? WHERE id_artiste = ?")->execute([$fake_now, $morceau['id_artiste']]);
+                        $pdo->prepare("UPDATE titre SET derniere_diffusion = ? WHERE id_titre = ?")->execute([$fake_now, $morceau['id_titre']]);
+                    } else {
+                        break;
+                    }
+                }
+                // 🟢 NOUVEAUTÉ : Notifier le superviseur Python de recharger la playlist en mémoire
+                $ch = curl_init('http://127.0.0.1:8089/reload_schedule');
+                curl_setopt($ch, CURLOPT_POST, 1);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 2);
+                curl_exec($ch);
+                curl_close($ch);
+
+                flash('ok', "Playlist automatique de $nb_morceaux_a_generer morceaux injectée et synchronisée avec le Superviseur !");
+                break;    
             default:
                 flash('err', "Action inconnue.");
         }
@@ -414,7 +525,19 @@ $next_date = (new DateTime($date_sel))->modify('+1 day')->format('Y-m-d');
 
 <!-- ══ SIDEBAR ══ -->
 <div class="sidebar">
-
+<div class="panel" style="border-top-color: var(--ok);">
+    <div class="panel-title" style="color: var(--ok);">🤖 Remplissage Auto</div>
+    <p style="font-size: 0.75rem; color: var(--muted); margin-bottom: 1rem; font-family: var(--mono);">
+      Génère instantanément 300 morceaux aléatoires (incluant les nouveautés du Shell) en respectant strictement les règles de rotation.
+    </p>
+    <form method="post">
+      <input type="hidden" name="action" value="generate_auto">
+      <input type="hidden" name="date_prog" value="<?= $date_sel ?>">
+      <button type="submit" class="btn" style="width:100%; background: var(--ok); color: #000;">
+        ⚡ Générer 300 morceaux
+      </button>
+    </form>
+  </div>
   <!-- Ajouter un passage -->
   <div class="panel">
     <div class="panel-title">➕ Ajouter un passage</div>

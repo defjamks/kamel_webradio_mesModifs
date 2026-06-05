@@ -551,6 +551,26 @@ class AudioPipe:
             S.playlist_source = "random" if playlist._db_done else "db"
             _seg_watcher.set_track(track.title, track.artist)
 
+            # 🟢 NOUVEAUTÉ : Mise à jour en temps réel de la DB pour l'IHM PHP
+            # On cherche si le morceau possède des attributs ID (on va se baser sur son chemin unique)
+            if HAS_DB and S.playlist_source == "db":
+                try:
+                    conn = _db_connect()
+                    with conn.cursor() as cur:
+                        now = datetime.now().strftime('%Y-m-d %H:%M:%S')
+                        
+                        # 1. Trouver l'id_titre et id_artiste liés à ce chemin
+                        cur.execute("SELECT id_titre, id_artiste FROM titre WHERE chemin = %s", (str(track.path),))
+                        res = cur.fetchone()
+                        
+                        if res:
+                            # 2. Mettre à jour l'artiste et le titre instantanément
+                            cur.execute("UPDATE artiste SET derniere_diffusion = %s, compteur_diffusion = compteur_diffusion + 1 WHERE id_artiste = %s", (now, res['id_artiste']))
+                            cur.execute("UPDATE titre SET derniere_diffusion = %s, compteur_diffusion = compteur_diffusion + 1 WHERE id_titre = %s", (now, res['id_titre']))
+                            conn.commit()
+                except Exception as e:
+                    log.debug("[DB-LIVE] Échec de la mise à jour du compteur : %s", e)
+
             proc = self._decode_to_pcm(track.path)
             try:
                 while not self._stop.is_set():

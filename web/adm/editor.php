@@ -451,31 +451,37 @@ header {
     <thead>
       <tr>
         <th>#</th><th>Titre</th><th>Artiste</th><th>Genre</th>
-        <th>Durée</th><th>Chemin</th><th>Actions</th>
+        <th>Durée</th><th>Diffusions</th><th>dernier passage</th><th>Chemin</th><th>Actions</th>
       </tr>
     </thead>
     <tbody>
     <?php foreach ($titres as $t): ?>
-    <tr id="row-t-<?= $t['id_titre'] ?>">
-      <td class="mono"><?= $t['id_titre'] ?></td>
-      <td><strong><?= h($t['nom_titre']) ?></strong></td>
-      <td><?= h($t['nom_artiste']) ?></td>
-      <td><?= $t['nom_genre'] ? '<span class="badge">'.h($t['nom_genre']).'</span>' : '<span class="mono">—</span>' ?></td>
-      <td class="mono"><?= fmtDuree((int)$t['duree']) ?></td>
-      <td class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= h($t['chemin']) ?>"><?= h($t['chemin']) ?></td>
-      <td class="actions">
-        <button class="btn btn-edit" onclick="editTitre(<?= $t['id_titre'] ?>)">Éditer</button>
-        <form method="post" onsubmit="return confirm('Supprimer ce titre ?')">
-          <input type="hidden" name="action" value="del_titre">
-          <input type="hidden" name="id_titre" value="<?= $t['id_titre'] ?>">
-          <button type="submit" class="btn btn-danger">✕</button>
-        </form>
-      </td>
-    </tr>
-    <!-- Inline edit row (caché par défaut) -->
-    <tr id="edit-t-<?= $t['id_titre'] ?>" class="edit-row" style="display:none;">
-      <td colspan="7">
-        <form method="post" action="editor.php" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;padding:.5rem 0;">
+  <tr id="row-t-<?= $t['id_titre'] ?>">
+  <td class="mono"><?= $t['id_titre'] ?></td>
+  <td><strong><?= h($t['nom_titre']) ?></strong></td>
+  <td><?= h($t['nom_artiste']) ?></td>
+  <td><?= $t['nom_genre'] ? '<span class="badge">'.h($t['nom_genre']).'</span>' : '<span class="mono">—</span>' ?></td>
+  <td class="mono"><?= fmtDuree((int)$t['duree']) ?></td>
+  
+  <td class="mono" style="color: var(--accent); font-weight: bold; text-align: center;"><?= (int)$t['compteur_diffusion'] ?>x</td>
+  
+  <td class="mono" style="font-size: 0.75rem;">
+    <?= $t['derniere_diffusion'] ? date('d/m H:i', strtotime($t['derniere_diffusion'])) : '<span style="color:var(--muted)">Jamais</span>' ?>
+  </td>
+  
+  <td class="mono" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="<?= h($t['chemin']) ?>"><?= h($t['chemin']) ?></td>
+  <td class="actions">
+    <button class="btn btn-edit" onclick="editTitre(<?= $t['id_titre'] ?>)">Éditer</button>
+    <form method="post" onsubmit="return confirm('Supprimer ce titre ?')">
+      <input type="hidden" name="action" value="del_titre">
+      <input type="hidden" name="id_titre" value="<?= $t['id_titre'] ?>">
+      <button type="submit" class="btn btn-danger">✕</button>
+    </form>
+  </td>
+</tr>
+
+<tr id="edit-t-<?= $t['id_titre'] ?>" class="edit-row" style="display:none;">
+  <td colspan="9"> <form method="post" action="editor.php" style="display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;padding:.5rem 0;">
           <input type="hidden" name="action" value="edit_titre">
           <input type="hidden" name="id_titre" value="<?= $t['id_titre'] ?>">
           <div class="field">
